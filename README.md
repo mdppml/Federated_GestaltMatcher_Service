@@ -1,49 +1,49 @@
-# GestaltMatcher-Arc
-This repository contains all the code used to train and evaluate our GestaltMatcher-Arc models in our WACV2023 
-accepted paper: Improving Deep Facial Phenotyping for Ultra-rare Disorder Verification Using Model Ensembles 
-(https://arxiv.org/abs/2211.06764 ).\
-This repo also contains snippets of code from insightface (https://github.com/deepinsight/insightface).
+# Federated GestaltMatcher Service
+This repository contains the source code of Federated GestaltMatcher Service, enabling the federated training 
+of ensemble feature extractor and privacy preserving syndrome inference and discovery introduced by 
+[Hustinx et al. (2023)](https://arxiv.org/abs/2211.06764). This repo is partially based on the
+public repository of this study, which can be accessed on their [Github repo](https://github.com/igsb/GestaltMatcher-Arc).
 
 In order to reproduce the results access must be requested to the GestaltMatcher DataBase (GMDB).
 That can be done following this link (https://db.gestaltmatcher.org/documents) if you're affiliated with a 
 medical facility or faculty.
 
-## Environment
-Please use python version 3.7+, and the package listed in requirements.txt.
+For more information about the setup of the environment and preprocessing of the data, please refer to [GestaltMatcher-Arc repo](https://github.com/igsb/GestaltMatcher-Arc).
 
+## Environment
+We conducted our experiments on a server running Slurm Workload Manager.
+Even though we included the recipe of the container that we created, one can
+run the experiments without Slurm Workload Manager by simply running the 
+corresponding scripts on terminal(s).
+
+We use Python 3.10 and the following packages listed in requirements.txt. To 
+setup the environment, you can run the following bash code snippet:
 ```
 python3 -m venv env_gm
 source env_gm/Scripts/activate
 pip install -r requirements.txt
 ```
-
-If you would like to train and evaluate with GPU, please remember to install cuda in your system.
-If you don't have GPU, please choose the CPU option (`--no_cuda`) in the following section.
-
-Follow these instructions (https://developer.nvidia.com/cuda-downloads ) to properly install CUDA.
-Follow the necessary instructions (https://pytorch.org/get-started/locally/ ) to properly install PyTorch, you might still need additional dependencies (e.g. Numpy).
-Using the following command should work for most using the `conda` virtual env.
-```conda install pytorch torchvision cudatoolkit=10.2 -c pytorch```
-
-If any problems occur when installing the packages in `requirements.txt`, the most important packages are:
+Briefly, the required packages are listed as follows:
 ```
-numpy
-pandas
-pytorch=1.9.0
-torchvision=0.10.0
-tensorboard
-opencv
-matplotlib
-scikit-image
-scikit-learn
-onnx2torch
-albumentations
+numpy==1.21.5
+pandas==1.4.3
+pytorch==1.12.0
+torchvision==0.13.0
+tensorboard==2.16.2
+opencv==4.6.0
+scikit-image==0.21.0
+scikit-learn==1.3.2
+scipy==1.10.1
+onnx2torch==1.4.1
+albumentations==1.2.1
 ```
 
-## Data preparation
+
+## Data preparation from [GestaltMatcher-Arc Repo](https://github.com/igsb/GestaltMatcher-Arc)
+### Dataset
 The data should be stored in `../data/GestaltMatcherDB/<version>`, it can be downloaded from http://gestaltmatcher.org 
 on request. \
-Please download the following two files from GMDB website:
+In our experiments, we use version 1.0.3. Please download the following two files from GMDB website:
 * GMDB metadata
 * GMDB_original_images_v1.0.3.tar.gz
 
@@ -84,71 +84,133 @@ python align_pipe.py --images_dir ../data/GestaltMatcherDB/<version>/gmdb_rot/ -
 Note: the alignment will require the `scikit-image` package.\
 Make sure to replace the `<version>` in the paths with your GMDB version; highest version at the time of writing is v1.0.3
 
-## Train models
-The training of GestaltMatcher-Arc needs to be run twice: a) for the resnet-50 mix model, and b) for the resnet-100 model.
-For these also require the pretrained ArcFace models from insightface: `glint360k_r50.onnx` and `glint360k_r100.onnx` to 
-be in the directory `./saved_models`. \
-These models can be downloaded here: https://github.com/deepinsight/insightface/tree/master/model_zoo 
+## Federated Global Ensemble Feature Extractor Model Training and Generating Latent Representations
+The ensemble model contains three models, which are fine-tuned (1) ResNet-50 mix model and (2) ResNet-100 model, and
+(3) the original ResNet-100 model. Therefore, we require to access the pre-trained versions of these models, which are
+named as `glint360k_r50.onnx` and `glint360k_r100.onnx`, respectively. You can downloaded here:
+https://github.com/deepinsight/insightface/tree/master/model_zoo
 
-To reproduce our Gestalt Matcher model listed in the table by training from scratch, use:
+In our experiments, we store them in `/saved_models`. However, you can store them wherever you want and provide that
+path to the experiment scripts.
+
+To run the federated training of the global ensemble feature extractor model, you can run the following script:
 ```
-python train_gm_arc.py --paper_model a --epochs 50 --session 1 --dataset gmdb --in_channels 3 --img_size 112 --use_tensorboard --local --data_dir ../data 
-python train_gm_arc.py --paper_model b --epochs 50 --session 2 --dataset gmdb --in_channels 3 --img_size 112 --use_tensorboard --local --data_dir ../data 
+./training.sh -s <session_id> -a <aggregation_method> -e <num_of_epochs> -f <aggregation_interval> -n <num_of_parties> -w <num_of_workers> -l <distribution_prefix> -d <distribution_number>
+```
+where
+```
+s: the session id to distinguish runs from each other
+a: the aggregation method (currently 'mean' is populated and tested)
+f: the aggregation interval, indicating after how many epochs the local models will be aggregated
+n: the number of silos in the system (we created the data of 4, 8, and 16 silos for our experiments)
+w: the number of workers to be used to load data
+l: the distribution type prefix (near-uniform: subject-wise_complete_uniform_random_ -- non-overlapping: non-intersecting_label_distribution_)
+d: the label distribution number (1-5 for near-uniform and 1 for non-overlapping
+```
+This information can also be obtained by running ```./training.sh -h```. Before running `training.sh`,
+the paths specified in `client.sh` and `aggregator.sh` scripts run by `training.sh` needs to be adjusted. 
+More specifically, the following paths/information need to be specified:
+```
+encoding_dir: the directory where the encodings (latent representations) will be saved
+data_dir: the directory where the data resides
+weight_dir: the directory storing the weights of the pre-trained networks mentioned earlier
+model_dir: the directory where the final models will be saved
+lookup_table_save_path: the directory where the lookup table will be saved
+federated_metadata_path: the additional path info on top of data_dir storing the files of patient ids that belong to each silo
 ```
 
-You may choose whatever seed and session you find useful.
-`--seed 11` was used to obtain these results, others have not been tested.
+To give a sample running script, we provide the script to run the second near-uniform distribution experiment for 
+50 epochs with 4 silos, mean aggregation, the aggregation interval of 5 epochs below:
+```
+./training.sh -s 36 -a mean -e 50 -f 5 -n 4 -w 4 -l subject-wise_complete_uniform_random_ -d 2
+```
+This script will create 5 processes in total by running `client.sh` and `aggregator.sh`. 
+Four of those processes are for the clients and one for the aggregator. Each process will be 
+submitted as a separate job to Slurm Workload Manager. One can run the
+corresponding scripts initiating clients and aggregator on the terminal if Slurm Workload Manager is not
+available.
 
-Using the argument `--use_tensorboard` allows you to track your models training and validation curves over time.
+Each client trains its local model using its corresponding _frequent_ patients. After _f_ epochs, the local models
+are aggregated by the aggregator and the aggregated model sent back to the clients. This process continues until _e_
+epochs. This process is performed to fine-tune both `glint360k_r50.onnx` and `glint360k_r100.onnx`, respectively.
+Once the global ensemble feature extractor model is obtained, the clients compute the latent representations of their
+_frequent_ and _rare_ patients' images, which then saved to `/encodings` folder.
+
+In our experiments, we used the default seed, which is `11`. You can specify a different
+seed using the argument `--seed`.
 
 Training a model without GPU has not been tested.
 
-### Pretrained models
-Due to ethical reasons the pretrained models are not made available publicly. \
-Once access has been granted to GMDB, the pretrained model weights can be requested as well.
-
-## Encode photos and evaluate models
-With `python predict_ensemble.py` you will encode all images in `--data_dir`, which by default is set to 
-`../data/GestaltMatcherDB/v1.0.3/gmdb_align`.\
-The face encodings will be saved to `all_encodings.csv`.
-
-For the machine without GPU, please use `--no_cuda`.
-
-The following command will generate `all_encodings.csv` using the three models in our model ensemble, as well as the 
-test time augmentation described in the paper:
+### Syndrome Inference
+To evaluate the performance of the federated GestaltMatcher syndrome inference, the latent representations of images
+of silos computed using the global feature extractor model will be utilized. The following script runs the kernel matrix
+computation framework to calculate the cosine distance between all pairwise latent representations distributed across
+multiple silos. The evaluation of the federated GestaltMatcher service is then performed over the test samples, which 
+are also distributed across multiple silos using Top-k evaluation metric. 
 
 ```
-python predict_ensemble.py
+./inference.sh -s <session_id> -n <num_of_parties> -l <distribution_prefix> -d <distribution_number>
 ```
 
-### Evaluation
-Using the previously computed encodings as input for evaluation will allow you to obtain the results listed in the table.
-
+A sample running script in parallel to the above `training.sh` script is as follows:
 ```
-python evaluate_ensemble.py
+./inference.sh -s 36 -n 4 -l subject-wise_complete_uniform_random_ -d 2
+```
 
+This will output of the evaluation results in a similar following format:
+```
 ===========================================================
 ---------   test: Frequent, gallery: Frequent    ----------
 |Test set     |Gallery |Test  |Top-1 |Top-5 |Top-10|Top-30|
-|GMDB-frequent|5761    |593   |52.99 |71.01 |79.19 |89.99 |
+|GMDB-frequent|5759    |593   |47.06 |70.29 |77.47 |86.69 |
 ---------       test: Rare, gallery: Rare        ----------
 |Test set     |Gallery |Test  |Top-1 |Top-5 |Top-10|Top-30|
-|GMDB-rare    |792.7   |312.3 |35.98 |53.93 |62.43 |76.56 |
---------- test: Frequent, gallery: Frequent+Rare ----------
+|GMDB-rare    |792.7   |312.3 |36.44 |52.82 |61.22 |75.33 |
+---------   test: Frequent, gallery: Frequent+Rare   ----------
 |Test set     |Gallery |Test  |Top-1 |Top-5 |Top-10|Top-30|
-|GMDB-frequent|6553.7  |593   |50.79 |69.17 |76.66 |88.37 |
+|GMDB-rare    |6551.7  |593 |46.34 |67.93 |74.96 |86.03 |
 ---------   test: Rare, gallery: Frequent+Rare   ----------
 |Test set     |Gallery |Test  |Top-1 |Top-5 |Top-10|Top-30|
-|GMDB-rare    |6553.7  |312.3 |24.05 |38.44 |44.53 |57.95 |
-===========================================================
-
+|GMDB-rare    |6551.7  |312.3 |23.45 |38.53 |44.33 |57.40 |
+Evaluation is completed! Time to run: 544 seconds
 ```
 
+## Overall Structure
+To give you a better perspective on the overall folder structure, we include the structure that we set up:
+```
+📦 Federated GestaltMatcher Service
+├── 📂 data
+│   ├── 📂 GestaltMatcherDB
+│   │   ├── 📂 v1.0.3
+│   │   │   ├── 📂 gmdb_align
+│   │   │   ├── 📂 gmdb_images
+│   │   │   ├── 📂 gmdb_metadata
+│   │   │   │   ├── 📂 federated_metadata
+│   │   │   ├── 📂 gmdb_rot 
+├── 📂 models
+├── 📂 saved_models
+├── 📂 lookup_table
+├── 📂 encodings
+├── 📂 lib
+│   ├── 📂 datasets
+│   │   ├── 🐍 gestalt_matcher_dataset.py
+│   │   ├── 🐍 utils.py
+│   ├── 📂 models
+│   │   ├── 🐍 my_arcface.py
+│   │   ├── 🐍 utils.py
+│   ├── 🐍 fed_utils.py
+│   ├── 🐍 utils.py
+├── 📂 job_submissions
+│   ├── 📜 training.sh
+│   ├── 📜 client.sh
+│   ├── 📜 aggregator.sh
+│   ├── 📜 inference.sh
+```
 
 ## Contact
-Tzung-Chien Hsieh
+Ali Burak Ünal
 
-Email: thsieh@uni-bonn.de or la60312@gmail.com
+Email: ali-burak.uenal@uni-tuebingen.de
 
 ## License
 [![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC%20BY--NC%204.0-lightgrey.svg)](http://creativecommons.org/licenses/by-nc/4.0/)
